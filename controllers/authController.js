@@ -5,20 +5,28 @@ const jwt = require("jsonwebtoken");
 // SIGNUP
 const signup = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    console.log('Signup request body:', req.body);
+    const { name, username, email, password, role } = req.body;
+
+    // Accept requests with either an explicit username or derive one from `name`
+    let usernameToUse = username;
+    if (!usernameToUse && name) {
+      // derive a safe username from name (fallback)
+      usernameToUse = name.trim().toLowerCase().replace(/\s+/g, '') + (Date.now() % 1000);
+    }
 
     // Validate input
     if (!name || !email || !password) {
-      return res.status(400).json({
-        message: "Name, email, and password are required"
-      });
+      return res.status(400).json({ message: 'Missing required fields: name, email, password' });
     }
 
     // Check if user already exists
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    const existingUser = await User.findOne({
+      $or: [{ email: email.toLowerCase() }, { username: usernameToUse.toLowerCase() }]
+    });
     if (existingUser) {
       return res.status(409).json({
-        message: "User with this email already exists"
+        message: "User with this email or username already exists"
       });
     }
 
@@ -36,6 +44,7 @@ const signup = async (req, res) => {
     // Create new user
     const user = new User({
       name: name.trim(),
+      username: usernameToUse.trim().toLowerCase(),
       email: email.toLowerCase(),
       password: hashedPassword,
       role: role || "staff"
@@ -48,6 +57,7 @@ const signup = async (req, res) => {
       user: {
         id: user._id,
         name: user.name,
+        username: user.username,
         email: user.email,
         role: user.role
       }
@@ -55,40 +65,54 @@ const signup = async (req, res) => {
   } catch (error) {
     if (error.code === 11000) {
       return res.status(409).json({
-        message: "Email already exists"
+        message: "Email or username already exists"
       });
     }
-    res.status(500).json({
-      message: error.message
-    });
+    console.error('Signup error:', error, 'body:', req.body);
+    res.status(500).json({ message: error.message });
   }
 };
 
 // LOGIN
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    console.log('Login request body:', req.body);
+    const { username, email, password } = req.body;
 
     // Validate input
-    if (!email || !password) {
+    if ((!username && !email) || !password) {
       return res.status(400).json({
-        message: "Email and password are required"
+        message: "Username or email and password are required"
       });
     }
 
-    // Find user by email with password field
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+    const query = username
+      ? { username: username.toLowerCase() }
+      : { email: email.toLowerCase() };
+
+    console.log('Login query:', query);
+
+    // Find user by username or email with password field
+    const user = await User.findOne(query).select('+password');
     if (!user) {
+      console.log('Login failed: no matching user');
       return res.status(401).json({
-        message: "Invalid email or password"
+        message: "Invalid username/email or password"
       });
     }
+
+    console.log('User found for login:', {
+      id: user._id,
+      email: user.email,
+      username: user.username,
+      role: user.role
+    });
 
     // Compare passwords
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       return res.status(401).json({
-        message: "Invalid email or password"
+        message: "Invalid username/email or password"
       });
     }
 
@@ -97,6 +121,7 @@ const login = async (req, res) => {
       {
         id: user._id,
         email: user.email,
+        username: user.username,
         role: user.role
       },
       process.env.JWT_SECRET || "your_default_secret_key",
@@ -109,6 +134,7 @@ const login = async (req, res) => {
       user: {
         id: user._id,
         name: user.name,
+        username: user.username,
         email: user.email,
         role: user.role
       }
